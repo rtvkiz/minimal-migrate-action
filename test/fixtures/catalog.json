@@ -1,0 +1,13 @@
+{
+  "org": "rtvkiz",
+  "registry": "ghcr.io",
+  "prefix": "minimal-",
+  "images": [
+    { "name": "node-slim" },
+    { "name": "redis-slim" },
+    { "name": "postgres-slim" },
+    { "name": "nginx" },
+    { "name": "python" },
+    { "name": "java" }
+  ]
+}

@@ -1,0 +1,54 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  matcher-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run migrate.py against the test fixture (offline catalog)
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp test/fixtures/Dockerfile "${work}/Dockerfile"
+
+          python3 scripts/migrate.py \
+            --root "${work}" \
+            --catalog-file test/fixtures/catalog.json \
+            --output /tmp/changes.json
+
+          count=$(python3 -c "import json; print(len(json.load(open('/tmp/changes.json'))))")
+          echo "Matched ${count} FROM line(s)"
+
+          test "${count}" -eq 4
+
+          # the already-migrated postgres-slim FROM line must be untouched
+          grep -q 'FROM ghcr.io/rtvkiz/minimal-postgres-slim:latest' "${work}/Dockerfile"
+
+          # a sample rewrite must have landed correctly, stage name preserved
+          grep -q 'FROM ghcr.io/rtvkiz/minimal-node-slim:latest AS build' "${work}/Dockerfile"
+
+          echo "OK"
+
+      - name: Dry-run must not modify the file
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp test/fixtures/Dockerfile "${work}/Dockerfile"
+          before=$(md5sum "${work}/Dockerfile" | cut -d' ' -f1)
+
+          python3 scripts/migrate.py \
+            --root "${work}" \
+            --catalog-file test/fixtures/catalog.json \
+            --dry-run
+
+          after=$(md5sum "${work}/Dockerfile" | cut -d' ' -f1)
+          test "${before}" = "${after}"
+          echo "OK"

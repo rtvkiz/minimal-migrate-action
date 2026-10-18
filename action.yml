@@ -1,0 +1,82 @@
+name: "Migrate to minimal hardened images"
+description: >
+  Scans Dockerfiles in this repository for base images that have a hardened,
+  minimal-CVE equivalent in the minimal catalog (minimalcontainers.com), and
+  opens a pull request swapping matching FROM lines to the minimal image.
+author: "rtvkiz"
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  dockerfile-glob:
+    description: "Glob pattern (relative to repo root) for Dockerfiles to scan"
+    required: false
+    default: "**/Dockerfile*"
+  base-branch:
+    description: "Branch to open the PR against"
+    required: false
+    default: ${{ github.event.repository.default_branch }}
+  pr-branch:
+    description: "Branch name to create for the migration PR"
+    required: false
+    default: "minimal-migrate"
+  dry-run:
+    description: "If true, report matches but do not write changes or open a PR"
+    required: false
+    default: "false"
+  github-token:
+    description: "Token used to open the pull request"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  changes-count:
+    description: "Number of FROM lines rewritten"
+    value: ${{ steps.migrate.outputs.changes-count }}
+  pull-request-url:
+    description: "URL of the opened pull request, if any"
+    value: ${{ steps.pr.outputs.pull-request-url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run migration scan
+      id: migrate
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 "${{ github.action_path }}/scripts/migrate.py" \
+          --root "${GITHUB_WORKSPACE}" \
+          --glob "${{ inputs.dockerfile-glob }}" \
+          ${{ inputs.dry-run == 'true' && '--dry-run' || '' }} \
+          --output /tmp/minimal-migrate-changes.json
+        count=$(python3 -c "import json; print(len(json.load(open('/tmp/minimal-migrate-changes.json'))))")
+        echo "changes-count=${count}" >> "$GITHUB_OUTPUT"
+
+    - name: Open pull request
+      id: pr
+      if: inputs.dry-run != 'true' && steps.migrate.outputs.changes-count != '0'
+      uses: peter-evans/create-pull-request@v6
+      with:
+        token: ${{ inputs.github-token }}
+        branch: ${{ inputs.pr-branch }}
+        base: ${{ inputs.base-branch }}
+        commit-message: "chore: migrate base images to minimal hardened equivalents"
+        title: "Migrate base images to minimal (hardened, low-CVE) equivalents"
+        body: >
+          Opened automatically by
+          [minimal-migrate-action](https://github.com/rtvkiz/minimal-migrate-action).
+
+
+          This PR swaps one or more `FROM` base images for their hardened
+          equivalent from the [minimal](https://minimalcontainers.com)
+          catalog — free, MIT-licensed, cosign-signed, SBOM-attested, and
+          rebuilt daily to keep CVE counts near zero.
+
+
+          **Review before merging:** the new image tags are pinned to
+          `:latest`. Check that the minimal image's available tag covers
+          the version your application needs, and pin to a specific tag
+          once confirmed.
+        labels: dependencies
