@@ -34,6 +34,9 @@ outputs:
   changes-count:
     description: "Number of FROM lines rewritten"
     value: ${{ steps.migrate.outputs.changes-count }}
+  skipped-count:
+    description: "Number of FROM lines matched by name but left unchanged because minimal has no published version compatible with the requested tag"
+    value: ${{ steps.migrate.outputs.skipped-count }}
   pull-request-url:
     description: "URL of the opened pull request, if any"
     value: ${{ steps.pr.outputs.pull-request-url }}
@@ -51,8 +54,18 @@ runs:
           --glob "${{ inputs.dockerfile-glob }}" \
           ${{ inputs.dry-run == 'true' && '--dry-run' || '' }} \
           --output /tmp/minimal-migrate-changes.json
-        count=$(python3 -c "import json; print(len(json.load(open('/tmp/minimal-migrate-changes.json'))))")
-        echo "changes-count=${count}" >> "$GITHUB_OUTPUT"
+        changes=$(python3 -c "import json; print(len(json.load(open('/tmp/minimal-migrate-changes.json'))['changes']))")
+        skipped=$(python3 -c "import json; print(len(json.load(open('/tmp/minimal-migrate-changes.json'))['skipped']))")
+        echo "changes-count=${changes}" >> "$GITHUB_OUTPUT"
+        echo "skipped-count=${skipped}" >> "$GITHUB_OUTPUT"
+
+        if [ "${skipped}" != "0" ]; then
+          {
+            echo "### minimal-migrate: ${skipped} FROM line(s) skipped (no compatible minimal version)"
+            echo
+            python3 "${{ github.action_path }}/scripts/summarize_skipped.py" /tmp/minimal-migrate-changes.json
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
 
     - name: Open pull request
       id: pr
@@ -75,8 +88,14 @@ runs:
           rebuilt daily to keep CVE counts near zero.
 
 
-          **Review before merging:** the new image tags are pinned to
-          `:latest`. Check that the minimal image's available tag covers
-          the version your application needs, and pin to a specific tag
-          once confirmed.
+          Each rewritten line keeps the version you had pinned, resolved to
+          the matching minimal tag (or `:latest` if the original FROM line
+          had no version pin). A FROM line was only rewritten if minimal
+          actually publishes a compatible version — see the workflow run
+          summary for any lines that were left untouched because no
+          compatible minimal version exists yet.
+
+
+          **Review before merging:** confirm the resolved tag is the one
+          you expect before merging.
         labels: dependencies

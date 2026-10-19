@@ -12,7 +12,8 @@ rebuilt daily to keep CVE counts near zero.
 
 1. Fetches the current [minimal catalog](https://github.com/rtvkiz/minimal/blob/main/catalog.json).
 2. Scans Dockerfiles matching `dockerfile-glob` for `FROM` lines.
-3. Rewrites any base image with a known minimal equivalent (exact-name
+3. Rewrites any base image with a known minimal equivalent **and** an
+   available minimal version matching the one you had pinned (exact-name
    matching only in this version — see [Matching](#matching) below).
 4. Opens a pull request with the changes, unless `dry-run` is set.
 
@@ -52,19 +53,31 @@ jobs:
 | Output | Description |
 |---|---|
 | `changes-count` | Number of `FROM` lines rewritten |
+| `skipped-count` | Number of `FROM` lines matched by name but left unchanged because minimal has no published version compatible with the requested tag |
 | `pull-request-url` | URL of the opened pull request, if any |
 
 ## Matching
 
-This version only rewrites a `FROM` line when the base image's bare
-repository name (registry/namespace/tag stripped) is an exact match for a
-minimal catalog image name, or for one of a small set of known aliases
-where the upstream Docker Hub name differs from minimal's (e.g. `redis` →
-`redis-slim`, `node` → `node-slim`, `postgres` → `postgres-slim`).
+A `FROM` line is only rewritten when **both** of these hold:
 
-It will not attempt to preserve the original image's version — the
-replacement is always pinned to `:latest`, and the opened PR calls this out
-explicitly so you can verify and re-pin before merging.
+1. The base image's bare repository name (registry/namespace/tag stripped)
+   is an exact match for a minimal catalog image name, or for one of a
+   small set of known aliases where the upstream Docker Hub name differs
+   from minimal's (e.g. `redis` → `redis-slim`, `node` → `node-slim`,
+   `postgres` → `postgres-slim`).
+2. **minimal has actually published a version compatible with the one you
+   had pinned.** minimal ships one rolling current version per image (plus
+   retained historical build tags) rather than parallel version tracks the
+   way Chainguard does — so `node:20` has no minimal equivalent at all if
+   minimal has never built a 20.x tag, and the line is left untouched
+   rather than silently jumped to whatever major minimal currently ships.
+   A `FROM` line with no parseable version (bare `FROM node`, or a
+   non-numeric tag like `node:alpine`) is treated as unconstrained and
+   rewritten to `:latest`.
+
+Skipped lines are reported in `skipped-count`, in the job's
+`$GITHUB_STEP_SUMMARY`, and in the action's log output — they're not
+silently dropped.
 
 Multi-stage builds are handled correctly: a `FROM <stage-name>` referencing
 a previous build stage is never mistaken for a real image.
@@ -72,8 +85,12 @@ a previous build stage is never mistaken for a real image.
 ## Development
 
 ```bash
-# run the matcher against the bundled test fixture, offline
-python3 scripts/migrate.py --root test/fixtures --catalog-file test/fixtures/catalog.json --dry-run
+# run the matcher against the bundled test fixture, offline (no network calls)
+python3 scripts/migrate.py \
+  --root test/fixtures \
+  --catalog-file test/fixtures/catalog.json \
+  --ghcr-tags-file test/fixtures/ghcr-tags.json \
+  --dry-run
 ```
 
 ## License

@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run migrate.py against the test fixture (offline catalog)
+      - name: Run migrate.py against the test fixture (offline catalog + tags)
         run: |
           set -euo pipefail
           work=$(mktemp -d)
@@ -22,18 +22,26 @@ jobs:
           python3 scripts/migrate.py \
             --root "${work}" \
             --catalog-file test/fixtures/catalog.json \
+            --ghcr-tags-file test/fixtures/ghcr-tags.json \
             --output /tmp/changes.json
 
-          count=$(python3 -c "import json; print(len(json.load(open('/tmp/changes.json'))))")
-          echo "Matched ${count} FROM line(s)"
+          changes=$(python3 -c "import json; print(len(json.load(open('/tmp/changes.json'))['changes']))")
+          skipped=$(python3 -c "import json; print(len(json.load(open('/tmp/changes.json'))['skipped']))")
+          echo "Matched ${changes} FROM line(s), skipped ${skipped}"
 
-          test "${count}" -eq 4
+          test "${changes}" -eq 4
+          test "${skipped}" -eq 3
+
+          # a version-compatible rewrite lands with the matched tag, stage name preserved
+          grep -q 'FROM ghcr.io/rtvkiz/minimal-node-slim:25.8.1-r0 AS build' "${work}/Dockerfile"
+
+          # a version-incompatible FROM line is left completely untouched
+          grep -q '^FROM node:20$' "${work}/Dockerfile"
+          grep -q '^FROM redis:7$' "${work}/Dockerfile"
+          grep -q '^FROM nginx:1.27$' "${work}/Dockerfile"
 
           # the already-migrated postgres-slim FROM line must be untouched
           grep -q 'FROM ghcr.io/rtvkiz/minimal-postgres-slim:latest' "${work}/Dockerfile"
-
-          # a sample rewrite must have landed correctly, stage name preserved
-          grep -q 'FROM ghcr.io/rtvkiz/minimal-node-slim:latest AS build' "${work}/Dockerfile"
 
           echo "OK"
 
@@ -47,6 +55,7 @@ jobs:
           python3 scripts/migrate.py \
             --root "${work}" \
             --catalog-file test/fixtures/catalog.json \
+            --ghcr-tags-file test/fixtures/ghcr-tags.json \
             --dry-run
 
           after=$(md5sum "${work}/Dockerfile" | cut -d' ' -f1)
