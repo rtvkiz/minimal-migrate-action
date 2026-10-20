@@ -61,3 +61,73 @@ jobs:
           after=$(md5sum "${work}/Dockerfile" | cut -d' ' -f1)
           test "${before}" = "${after}"
           echo "OK"
+
+      - name: Edge cases - ARG-based FROM, digests, private registry ports, stage names, lowercase, comments
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp test/fixtures/Dockerfile.edgecases "${work}/Dockerfile.edgecases"
+
+          python3 scripts/migrate.py \
+            --root "${work}" \
+            --glob "Dockerfile*" \
+            --catalog-file test/fixtures/catalog.json \
+            --ghcr-tags-file test/fixtures/ghcr-tags.json \
+            --output /tmp/edge-changes.json
+
+          count=$(python3 -c "import json; print(len(json.load(open('/tmp/edge-changes.json'))['changes']))")
+          test "${count}" -eq 3
+
+          f="${work}/Dockerfile.edgecases"
+
+          # ARG-based FROM is never touched (not a real image reference)
+          grep -q "^FROM \${BASE_IMAGE} AS build\$" "${f}"
+
+          # a FROM referencing a prior build stage is never mistaken for a real image
+          grep -q '^FROM build AS test$' "${f}"
+
+          # golang:1.23 has no minimal equivalent under that exact name (catalog has "go", not "golang")
+          grep -q '^FROM golang:1.23 AS gobuild$' "${f}"
+
+          # private registry with a port: bare name extracted correctly, version matched
+          grep -q 'FROM ghcr.io/rtvkiz/minimal-redis-slim:8.6.1-r0$' "${f}"
+
+          # digest-pinned reference matched by name, no version to preserve -> :latest
+          grep -q 'FROM ghcr.io/rtvkiz/minimal-redis-slim:latest AS cache' "${f}"
+
+          # lowercase "from"/"as" still matched, case of "as" preserved
+          grep -q 'FROM ghcr.io/rtvkiz/minimal-node-slim:25.8.1-r0 as lowercasestage' "${f}"
+
+          # a FROM keyword inside a comment is never matched
+          grep -q '^# NOTE: this Dockerfile used to say FROM node:14' "${f}"
+
+          # unrelated image untouched
+          grep -q '^FROM ubuntu:22.04$' "${f}"
+
+          # COPY --from= lines are never mistaken for FROM lines
+          grep -q '^COPY --from=gobuild /app /app$' "${f}"
+          grep -q '^COPY --from=build /app/dist /dist$' "${f}"
+
+          echo "OK"
+
+      - name: Second pass over already-migrated files must be a no-op (idempotency)
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp test/fixtures/Dockerfile.edgecases "${work}/Dockerfile.edgecases"
+
+          python3 scripts/migrate.py \
+            --root "${work}" --glob "Dockerfile*" \
+            --catalog-file test/fixtures/catalog.json \
+            --ghcr-tags-file test/fixtures/ghcr-tags.json \
+            --output /tmp/pass1.json
+
+          python3 scripts/migrate.py \
+            --root "${work}" --glob "Dockerfile*" \
+            --catalog-file test/fixtures/catalog.json \
+            --ghcr-tags-file test/fixtures/ghcr-tags.json \
+            --output /tmp/pass2.json
+
+          second_pass_changes=$(python3 -c "import json; print(len(json.load(open('/tmp/pass2.json'))['changes']))")
+          test "${second_pass_changes}" -eq 0
+          echo "OK"

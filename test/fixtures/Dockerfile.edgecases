@@ -1,0 +1,26 @@
+ARG BASE_IMAGE=node:25
+FROM ${BASE_IMAGE} AS build
+RUN npm install
+
+FROM build AS test
+RUN npm test
+
+FROM golang:1.23 AS gobuild
+RUN go build
+
+FROM myregistry.internal:5000/redis:8
+RUN echo hi
+
+FROM redis@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678 AS cache
+RUN echo hi
+
+from node:25 as lowercasestage
+run npm install
+
+# NOTE: this Dockerfile used to say FROM node:14, don't revert to that
+FROM ubuntu:22.04
+RUN echo "unrelated image, should not match anything"
+
+FROM scratch
+COPY --from=gobuild /app /app
+COPY --from=build /app/dist /dist
