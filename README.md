@@ -79,6 +79,14 @@ Skipped lines are reported in `skipped-count`, in the job's
 `$GITHUB_STEP_SUMMARY`, and in the action's log output — they're not
 silently dropped.
 
+**Digest-pinned images are rewritten too, which downgrades the pin.** A
+`FROM redis@sha256:...` has no version to preserve, so it's treated as
+unconstrained and rewritten to a minimal tag (`:latest` or a matched
+version) like an untagged `FROM redis` would be. That trades an immutable
+digest pin for a mutable tag — if you deliberately pin by digest for
+reproducibility, review those lines in the PR before merging rather than
+assuming the digest-level guarantee carried over.
+
 Multi-stage builds are handled correctly: a `FROM <stage-name>` referencing
 a previous build stage is never mistaken for a real image.
 
